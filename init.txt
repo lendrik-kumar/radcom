@@ -1,0 +1,198 @@
+# Off-Grid Mesh Messaging System — Architecture & Design Document
+
+**Status:** v1 design finalized, hardware sourcing in progress
+**Scope:** Single-cell, fully radio-only messaging network with phone-to-node WiFi access
+
+---
+
+## 1. Overview
+
+A comms system for deploying temporary, infrastructure-free messaging coverage over an area — conceptually similar to bitchat, but built around ESP32 radio nodes instead of a phone-to-phone BLE mesh. Phones connect to their nearest ESP32 node over WiFi; the node relays messages over LoRa radio to a central master, which routes them to whichever node the recipient is currently attached to.
+
+**Core constraints that shaped every decision below:**
+- Fully radio-only / off-grid — no wired or WiFi backbone between node locations
+- Master must cover roughly a 1 km radius, terrain has minor obstacles
+- Target scale: 5,000–10,000 concurrent users total (stretch goal), hundreds of WiFi clients per node
+- Expected usage: occasional check-ins, roughly one message per user every 10–15 minutes
+
+---
+
+## 2. Network Topology
+
+**Single-hop star.** Every ESP32 node sits within direct radio range of the master — confirmed by design, so no inter-node relaying or mesh routing is needed. This was a deliberate simplification from an earlier full-mesh concept: it removes the hardest problems (multi-hop route discovery, flood-based delivery, loop prevention) at the cost of capping deployment radius to what one master radio can reach.
+
+```
+        Phone A ── WiFi ── Node A
+                              │
+                            LoRa
+                              │
+                           Master (Raspberry Pi 5)
+                              │
+                            LoRa
+                              │
+        Phone B ── WiFi ── Node B
+```
+
+The master is the single point of failure by design — accepted trade-off for staying off-grid. Two phones attached to the *same* node can always message each other locally over WiFi even if the master is unreachable, as a free fallback.
+
+---
+
+## 3. State & Data Model
+
+State is deliberately split between master and node, each holding only what it needs:
+
+| Component | Owns | Contents |
+|---|---|---|
+| **Master** | Routing table | `UID → node ID` — which node each user is currently attached to |
+| **Master** | Message queue | Store-and-retry queue (SQLite) for messages to users who are currently unreachable |
+| **Node** | Session table | `local IP → UID` — currently WiFi-attached phones, ephemeral/in-RAM |
+
+The node's session table is built via an explicit attach handshake when a phone connects (not inferred from IP alone), and cleared on WiFi disconnect. The master's routing table is kept current by nodes reporting attach/detach events.
+
+---
+
+## 4. RF / Physical Layer
+
+| Parameter | Choice | Why |
+|---|---|---|
+| **Frequency band** | 865–867 MHz | India's legal de-licensed ISM band for this use (WPC de-licensing); also better propagation/diffraction than 2.4 GHz for a 1 km range with minor obstacles. **Not 433 MHz** — that band is tied to a different regulatory exemption class used for the RC control link work. |
+| **Chip** | SX1276 (sold as RFM95W or compatible) | Covers 137–1020 MHz, includes 865–867. **Not SX1278** — that chip is hardware-limited to roughly 420–525 MHz and physically cannot reach this band, regardless of firmware config. |
+| **Modulation** | LoRa | Long range, high processing gain, matches existing driver experience |
+| **Spreading factor** | SF7 default | Link budget (below) shows large margin at SF7; keeps airtime — and therefore capacity — as high as possible. SF8 as a fallback for specific obstruction-heavy spots, not the default. |
+| **Bandwidth** | 125 kHz | Standard LoRa channel width |
+| **Channel plan** | IN865 3-channel (865.0625 / 865.4025 / 865.985 MHz) | Standard India LoRaWAN channel plan, reused here for interference-avoidance headroom even without a multi-channel concentrator |
+| **TX power** | ~20 dBm module output (typical RFM95W); legal ceiling 30 dBm ERP | Plenty of margin without pushing to the legal limit |
+
+**Link budget sanity check (1 km, minor hurdles):**
+- Free-space path loss at 866 MHz, 1 km ≈ 91 dB
+- + ~15–20 dB for minor obstruction/multipath → effective loss ≈ 105–110 dB
+- Received power ≈ 20 dBm − 108 dB ≈ −88 dBm
+- SF7 sensitivity ≈ −123 dBm → **margin ≈ 35 dB**
+
+Healthy margin — should be field-validated once hardware is in hand, but supports SF7 as the working default rather than defaulting to a higher, slower SF "just in case."
+
+**Antenna strategy:** invest in the master's antenna (5–8 dBi omni + proper SMA connection), since it carries the whole link budget for every node. Nodes can run basic 2–3 dBi antennas.
+
+---
+
+## 5. Channel Access Protocol (how N nodes share one frequency)
+
+Master-driven polling, not contention-based (CSMA). The master enforces that **only one device transmits at a time**, so collisions are prevented by protocol design rather than luck:
+
+1. Master keeps a fixed list of known node IDs.
+2. Cycles through them round-robin: sends a POLL addressed to Node A, piggybacking any message queued for A.
+3. Every node's radio hears the POLL (shared frequency), but only the addressed node is allowed to reply.
+4. Node A replies with its queued outgoing message (if any) or "nothing to send."
+5. Master acknowledges, then moves to Node B, and so on, cycling continuously.
+
+**Timing:** each node's slot (POLL → DATA → ACK) takes roughly 150 ms. Full cycle time ≈ node count × 150 ms — under 1 second for 5 nodes, a couple of seconds for 20. This sets the worst-case latency for message delivery, which is well within tolerance at the target check-in cadence.
+
+---
+
+## 6. Message Delivery Protocol
+
+**End-to-end flow**, Phone A → Phone B:
+
+1. Phone A sends locally to Node A over WiFi.
+2. Node A resolves Phone A's IP to a UID via its session table, forwards as a **data** packet to the master over LoRa (in its polling slot).
+3. Master **acks** back to Node A (confirms receipt) — Node A can now tell Phone A "sent" locally.
+4. Master looks up the destination UID in its routing table, finds Node B, forwards the message as **data + ttl** in Node B's next polling slot.
+5. Node B **acks** back to the master.
+6. Node B resolves the destination UID to a local IP via its session table, delivers to Phone B over WiFi.
+
+**TTL clarification:** in this single-hop star, TTL is a **message expiry** field (how long the master should keep retrying/queuing before giving up), not a hop-count field — hop-count TTL was only relevant to the earlier multi-hop mesh concept, which this design no longer uses.
+
+**Reliability vs. capacity trade-off — decide deliberately before locking v1:**
+
+| Delivery mode | Radio exchanges per message | Relative capacity |
+|---|---|---|
+| Best-effort (2-hop: data up, data down; no explicit acks) | 2 | Baseline |
+| Full ack chain (as sketched: data+ack both hops) | 4 | ~half of baseline |
+| Middle ground: ack only the master→destination hop | 3 | ~two-thirds of baseline |
+
+**Store-and-forward:** if the destination UID isn't in the master's routing table (user not currently attached anywhere), the message goes into the master's queue and is retried once that UID reappears via a node's presence report.
+
+---
+
+## 7. Packet Format (descriptive)
+
+Fields needed, kept minimal since every byte costs airtime:
+- **msgType** — DATA / ACK / POLL / PRESENCE
+- **msgID** — for retry deduplication (not loop prevention — not needed in a single-hop star)
+- **srcUID / destUID** — sender and recipient identifiers
+- **ttl** — expiry / retry budget
+- **payload** — short, capped length, compact binary encoding (not JSON/text framing)
+
+LoRa's built-in CRC handles basic integrity; no need to duplicate that at the app layer.
+
+---
+
+## 8. Capacity Summary
+
+At the target usage pattern (~4 messages/user/hour, occasional check-ins):
+
+| Configuration | Master radio | Realistic throughput | Concurrent active users |
+|---|---|---|---|
+| v1 — best-effort delivery | Single SX1276 | ~7,000–14,000 msg/hr | **~1,800–3,500** |
+| v1 — full ack chain | Single SX1276 | ~3,500–7,000 msg/hr | **~900–1,750** |
+| v2 — multi-channel concentrator (future) | SX130x-class | ~15,000–30,000 msg/hr | ~3,750–7,500 |
+
+Ceiling for one connected off-grid cell, even with a v2 concentrator upgrade, tops out around 7,500–8,000 users — a real physics limit (one transmit chain, one channel), not a tuning problem. Reaching the full 5,000–10,000 target with comfortable margin, or scaling further, requires splitting into multiple independent cells on separate frequencies — which, since there's no backbone, cannot message across each other without a physical courier.
+
+---
+
+## 9. Hardware — Bill of Materials
+
+### Master (× 1)
+- Raspberry Pi 5
+- Official 27W USB-C power supply
+- microSD card, 32–64 GB (OS + SQLite queue)
+- 1× RFM95W (SX1276) 868 MHz module with SPI breakout
+- Separate 3.3V LDO regulator (don't power the radio off the Pi's GPIO 3.3V pin directly — TX current spikes to ~120 mA, more than that rail is sized for)
+- 868 MHz antenna, 5–8 dBi omni, + SMA pigtail if the module uses U.FL/IPEX
+- Jumper wires, breadboard/perfboard, header pins
+
+### Node (× N — start with 2–3 for v1 prototype)
+- ESP32-C3 mini dev board
+- 1× RFM95W (SX1276) 868 MHz module with SPI breakout
+- 868 MHz antenna, 2–3 dBi (basic is fine — range budget is invested at the master)
+- USB cable + power source (wall adapter or power bank)
+- Jumper wires, header pins
+
+### Shared / tools
+- microSD reader/writer
+- Soldering iron + solder (for antenna connectors / unsoldered headers)
+- Optional: RTL-SDR dongle, to visually confirm transmissions land on 865–867 MHz and check for interference before deployment
+
+**Note:** existing SX1278 modules from prior ELRS work are not reusable here — they remain correct for 433 MHz work, but cannot reach 865–867 MHz.
+
+---
+
+## 10. Scaling Path (future work, not v1)
+
+| Bottleneck | v1 state | Future fix | Cost |
+|---|---|---|---|
+| WiFi clients per node | ESP32-C3 onboard AP caps ~10 stations (hardware limit) | Real AP device (small OpenWrt router or Pi Zero 2 W + hostapd) in front of the ESP32-C3; ESP32-C3 becomes pure radio + relay | New hardware per node, no protocol change |
+| Master radio throughput | Single SX1276, ~7,000–14,000 msg/hr | Multi-channel concentrator (SX1301/1302-class, same hardware LoRaWAN gateways use) | Master-only swap, no change to node/master protocol |
+| Total network scale beyond ~7,500 users | N/A | Multiple independent cells on separate frequencies | Loses cross-cell messaging without a backbone or physical courier |
+
+---
+
+## 11. Open Decisions
+
+- **Message reliability mode**: best-effort (2-hop) vs. full ack chain (4-hop) vs. middle ground (3-hop) — directly trades capacity for delivery certainty; not yet locked in.
+- **Queue persistence**: should the master's message queue survive a Pi reboot/power loss (SQLite file-backed) or is in-memory acceptable for v1? Mostly affects how much to build now, not the architecture.
+- **Security baseline**: v1 should at minimum use a shared network key so the system ignores other LoRa traffic on the same band. Per-user encryption (so relaying nodes can't read message contents) is a v2 concern, not yet designed.
+
+---
+
+## 12. Suggested Build Order
+
+1. Point-to-point radio link — two nodes talking directly, confirm real-world link budget in your actual terrain.
+2. Local phone UI on one node — WiFi AP + WebSocket, verify phone-to-node loop end to end.
+3. Add master + polling protocol across 2–3 nodes — round-robin, no ack yet.
+4. Presence tracking — nodes report attach/detach, master routing table populated.
+5. Store-and-forward — master queues and retries for unreachable users.
+6. Add chosen ack/reliability mode (2-hop, 3-hop, or 4-hop — per the open decision above).
+7. Security — shared network key at minimum.
+8. (v2, later) Multi-channel concentrator at master; real AP hardware per node.
