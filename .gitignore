@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Master Node (C / Raspberry Pi)
+master/*.o
+master/radcom-master
+master/*.db
+master/*.db-shm
+master/*.db-wal
+
+# ESP-IDF (Node Firmware)
+firmware/node/build/
+firmware/node/sdkconfig
+firmware/node/sdkconfig.old
+firmware/node/dependencies.lock
+firmware/node/.log
+firmware/node/managed_components/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python (if any scripts are added later)
+__pycache__/
+*.pyc
