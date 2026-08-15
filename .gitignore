@@ -25,3 +25,7 @@ firmware/node/managed_components/
 # Python (if any scripts are added later)
 __pycache__/
 *.pyc
+
+# Tests (Mac OS binaries and debug symbols)
+firmware/tests/test_radcom
+*.dSYM/
