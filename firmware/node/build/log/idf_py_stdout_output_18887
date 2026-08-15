@@ -1,0 +1,161 @@
+Command: /Users/sanketkamboj/.espressif/python_env/idf5.5_py3.10_env/bin/python /Users/sanketkamboj/esp/esp-idf/tools/idf_monitor.py -p /dev/cu.usbmodem1101 -b 115200 --toolchain-prefix riscv32-esp-elf- --target esp32c3 --revision 3 --decode-panic backtrace /Users/sanketkamboj/Desktop/radcom/firmware/node/build/radcom_node.elf /Users/sanketkamboj/Desktop/radcom/firmware/node/build/bootloader/bootloader.elf -m '/Users/sanketkamboj/.espressif/python_env/idf5.5_py3.10_env/bin/python' '/Users/sanketkamboj/esp/esp-idf/tools/idf.py'
+[0;32mI (361) main_task: Started on CPU0[0m
+ESP-ROM:esp32c3-api1-20210207
+Build:Feb  7 2021
+rst:0x15 (USB_UART_CHIP_RESET),boot:0xe (SPI_FAST_FLASH_BOOT)
+Saved PC:0x42006516
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fcd5820,len:0x155c
+load:0x403cbf10,len:0xc84
+load:0x403ce710,len:0x2fa4
+entry 0x403cbf1a
+[0;32mI (24) boot: ESP-IDF v5.5.3 2nd stage bootloader[0m
+[0;32mI (24) boot: compile time Aug 15 2026 04:55:51[0m
+[0;32mI (25) boot: chip revision: v0.4[0m
+[0;32mI (25) boot: efuse block revision: v1.3[0m
+[0;32mI (28) boot.esp32c3: SPI Speed      : 80MHz[0m
+[0;32mI (32) boot.esp32c3: SPI Mode       : DIO[0m
+[0;32mI (36) boot.esp32c3: SPI Flash Size : 2MB[0m
+[0;32mI (39) boot: Enabling RNG early entropy source...[0m
+[0;32mI (44) boot: Partition Table:[0m
+[0;32mI (46) boot: ## Label            Usage          Type ST Offset   Length[0m
+[0;32mI (53) boot:  0 nvs              WiFi data        01 02 00009000 00006000[0m
+[0;32mI (59) boot:  1 phy_init         RF data          01 01 0000f000 00001000[0m
+[0;32mI (66) boot:  2 factory          factory app      00 00 00010000 00100000[0m
+[0;32mI (72) boot: End of partition table[0m
+[0;32mI (76) esp_image: segment 0: paddr=00010020 vaddr=3c0b0020 size=1eae0h (125664) map[0m
+[0;32mI (103) esp_image: segment 1: paddr=0002eb08 vaddr=3fc96a00 size=01510h (  5392) load[0m
+[0;32mI (104) esp_image: segment 2: paddr=00030020 vaddr=42000020 size=a33ach (668588) map[0m
+[0;32mI (211) esp_image: segment 3: paddr=000d33d4 vaddr=3fc97f10 size=01fbch (  8124) load[0m
+[0;32mI (213) esp_image: segment 4: paddr=000d5398 vaddr=40380000 size=169a4h ( 92580) load[0m
+[0;32mI (231) esp_image: segment 5: paddr=000ebd44 vaddr=50000000 size=00020h (    32) load[0m
+[0;32mI (238) boot: Loaded app from partition at offset 0x10000[0m
+[0;32mI (238) boot: Disabling RNG early entropy source...[0m
+[0;32mI (249) cpu_start: Unicore app[0m
+[0;32mI (257) cpu_start: GPIO 20 and 21 are used as console UART I/O pins[0m
+[0;32mI (257) cpu_start: Pro cpu start user code[0m
+[0;32mI (257) cpu_start: cpu freq: 160000000 Hz[0m
+[0;32mI (259) app_init: Application information:[0m
+[0;32mI (263) app_init: Project name:     radcom_node[0m
+[0;32mI (267) app_init: App version:      385e9a9[0m
+[0;32mI (271) app_init: Compile time:     Aug 15 2026 04:54:39[0m
+[0;32mI (276) app_init: ELF file SHA256:  90e8b1b06...[0m
+[0;32mI (281) app_init: ESP-IDF:          v5.5.3[0m
+[0;32mI (284) efuse_init: Min chip rev:     v0.3[0m
+[0;32mI (288) efuse_init: Max chip rev:     v1.99 [0m
+[0;32mI (292) efuse_init: Chip rev:         v0.4[0m
+[0;32mI (296) heap_init: Initializing. RAM available for dynamic allocation:[0m
+[0;32mI (302) heap_init: At 3FC9E490 len 00021B70 (134 KiB): RAM[0m
+[0;32mI (308) heap_init: At 3FCC0000 len 0001C710 (113 KiB): Retention RAM[0m
+[0;32mI (314) heap_init: At 3FCDC710 len 00002950 (10 KiB): Retention RAM[0m
+[0;32mI (320) heap_init: At 50000020 len 00001FC8 (7 KiB): RTCRAM[0m
+[0;32mI (326) spi_flash: detected chip: generic[0m
+[0;32mI (329) spi_flash: flash io: dio[0m
+[0;33mW (332) spi_flash: Detected size(4096k) larger than the size in the binary image header(2048k). Using the size in the binary image header.[0m
+[0;32mI (344) sleep_gpio: Configure to isolate all GPIO pins in sleep state[0m
+[0;32mI (350) sleep_gpio: Enable automatic switching of GPIO sleep configuration[0m
+[0;32mI (357) main_task: Started on CPU0[0m
+[0;32mI (360) main_task: Calling app_main()[0m
+[0;32mI (363) main: radcom node firmware starting[0m
+[0;32mI (371) main: node_id=1 (hardcoded in hardware_config.h)[0m
+[0;32mI (403) radio: SX1278 init successful[0m
+[0;32mI (405) pp: pp rom version: 9387209[0m
+[0;32mI (406) net80211: net80211 rom version: 9387209[0m
+[0;32mI (408) wifi:wifi driver task: 3fca93f4, prio:23, stack:6656, core=0[0m
+[0;32mI (412) wifi:wifi firmware version: 4df78f2[0m
+[0;32mI (413) wifi:wifi certification version: v7.0[0m
+[0;32mI (417) wifi:config NVS flash: enabled[0m
+[0;32mI (421) wifi:config nano formatting: disabled[0m
+[0;32mI (425) wifi:Init data frame dynamic rx buffer num: 32[0m
+[0;32mI (430) wifi:Init static rx mgmt buffer num: 5[0m
+[0;32mI (434) wifi:Init management short buffer num: 32[0m
+[0;32mI (438) wifi:Init dynamic tx buffer num: 32[0m
+[0;32mI (442) wifi:Init static tx FG buffer num: 2[0m
+[0;32mI (446) wifi:Init static rx buffer size: 1600[0m
+[0;32mI (450) wifi:Init static rx buffer num: 10[0m
+[0;32mI (454) wifi:Init dynamic rx buffer num: 32[0m
+[0;32mI (458) wifi_init: rx ba win: 6[0m
+[0;32mI (461) wifi_init: accept mbox: 6[0m
+[0;32mI (464) wifi_init: tcpip mbox: 32[0m
+[0;32mI (467) wifi_init: udp mbox: 6[0m
+[0;32mI (470) wifi_init: tcp mbox: 6[0m
+[0;32mI (472) wifi_init: tcp tx win: 5760[0m
+[0;32mI (476) wifi_init: tcp rx win: 5760[0m
+[0;32mI (479) wifi_init: tcp mss: 1440[0m
+[0;32mI (482) wifi_init: WiFi IRAM OP enabled[0m
+[0;32mI (485) wifi_init: WiFi RX IRAM OP enabled[0m
+[0;32mI (496) phy_init: phy_version 1232,d493f299,Aug 25 2025,19:01:20[0m
+[0;33mW (496) phy_init: failed to load RF calibration data (0x1102), falling back to full calibration[0m
+[0;32mI (543) phy_init: Saving new calibration data due to checksum failure or outdated calibration data, mode(2)[0m
+[0;32mI (549) wifi:mode : softAP (14:63:93:71:89:15)[0m
+[0;32mI (551) wifi:Total power save buffer number: 16[0m
+[0;32mI (551) wifi:Init max length of beacon: 752/752[0m
+[0;32mI (555) wifi:Init max length of beacon: 752/752[0m
+[0;32mI (560) esp_netif_lwip: DHCP server started on interface WIFI_AP_DEF with IP: 192.168.4.1[0m
+[0;32mI (569) radio: lora_task started[0m
+[0;32mI (570) router: started, node_id=1[0m
+[0;32mI (573) main: all tasks started[0m
+[0;32mI (576) main_task: Returned from app_main()[0m
+[0;33mW (6570) radio: master absent[0m
+[0;33mW (12570) radio: master absent[0m
+[0;33mW (18570) radio: master absent[0m
+[0;33mW (24570) radio: master absent[0m
+[0;33mW (30570) radio: master absent[0m
+[0;33mW (36570) radio: master absent[0m
+[0;32mI (38730) wifi:new:<1,0>, old:<1,1>, ap:<1,0>, sta:<255,255>, prof:1, snd_ch_cfg:0x0[0m
+[0;32mI (38731) wifi:station: 3e:b1:fc:84:be:57 join, AID=1, bgn, 20[0m
+[0;32mI (38733) wifi_ap: station 3e:b1:fc:84:be:57 join, AID=1[0m
+[0;32mI (38801) wifi:<ba-add>idx:2 (ifx:1, 3e:b1:fc:84:be:57), tid:0, ssn:0, winSize:64[0m
+[0;32mI (38804) wifi:<ba-add>idx:3 (ifx:1, 3e:b1:fc:84:be:57), tid:6, ssn:0, winSize:64[0m
+[0;32mI (39947) esp_netif_lwip: DHCP server assigned IP to a client, IP is: 192.168.4.2[0m
+[0;33mW (42570) radio: master absent[0m
+[0;33mW (48570) radio: master absent[0m
+[0;33mW (54570) radio: master absent[0m
+[0;33mW (60570) radio: master absent[0m
+[0;33mW (66570) radio: master absent[0m
+[0;33mW (72570) radio: master absent[0m
+[0;33mW (78570) radio: master absent[0m
+[0;33mW (84570) radio: master absent[0m
+[0;32mI (88459) router: attach: 917986990053 fd=58 sessions=1/10[0m
+[0;33mW (90570) radio: master absent[0m
+[0;33mW (96570) radio: master absent[0m
+[0;33mW (102570) radio: master absent[0m
+[0;32mI (104522) router: queued 917986990053→917987988789 len=5[0m
+[0;33mW (108570) radio: master absent[0m
+[0;33mW (114570) radio: master absent[0m
+[0;33mW (120570) radio: master absent[0m
+[0;33mW (126570) radio: master absent[0m
+[0;33mW (130642) httpd_ws: httpd_ws_get_frame_type: Failed to read header byte (socket FD invalid), closing socket now[0m
+[0;32mI (130983) wifi:<ba-add>idx:4 (ifx:1, 3e:b1:fc:84:be:57), tid:1, ssn:0, winSize:64[0m
+[0;33mW (132570) radio: master absent[0m
+[0;33mW (138570) radio: master absent[0m
+[0;33mW (143912) httpd_uri: httpd_uri: Method '3' not allowed for URI '/chat'[0m
+[0;33mW (143913) httpd_txrx: httpd_resp_send_err: 405 Method Not Allowed - Specified method is invalid for this resource[0m
+[0;33mW (144570) radio: master absent[0m
+[0;32mI (147934) wifi:station: 3e:b1:fc:84:be:57 leave, AID = 1, reason = 8, bss_flags is 33721443, bss:0x3fca01a4[0m
+[0;32mI (147935) wifi:new:<1,0>, old:<1,0>, ap:<1,0>, sta:<255,255>, prof:1, snd_ch_cfg:0x0[0m
+[0;32mI (147940) wifi:<ba-del>idx:2, tid:0[0m
+[0;32mI (147944) wifi:<ba-del>idx:4, tid:1[0m
+[0;32mI (147947) wifi:<ba-del>idx:3, tid:6[0m
+[0;32mI (147951) wifi_ap: station 3e:b1:fc:84:be:57 leave, AID=1[0m
+[0;32mI (147952) wifi:new:<1,1>, old:<1,0>, ap:<1,1>, sta:<255,255>, prof:1, snd_ch_cfg:0x0[0m
+[0;33mW (150570) radio: master absent[0m
+[0;33mW (156570) radio: master absent[0m
+[0;33mW (162570) radio: master absent[0m
+[0;33mW (168570) radio: master absent[0m
+[0;33mW (174570) radio: master absent[0m
+[0;33mW (180570) radio: master absent[0m
+[0;33mW (186570) radio: master absent[0m
+[0;33mW (192570) radio: master absent[0m
+[0;33mW (198570) radio: master absent[0m
+[0;33mW (204570) radio: master absent[0m
+[0;33mW (210570) radio: master absent[0m
+[0;33mW (216570) radio: master absent[0m
+[0;33mW (222570) radio: master absent[0m
+[0;33mW (228570) radio: master absent[0m
+[0;33mW (234570) radio: master absent[0m
+[0;33mW (240570) radio: master absent[0m
+[0;33mW (246570) radio: master absent[0m
+[0;33mW (252570) radio: master absent[0m
+[0;33mW (258570) radio: master absent[0m

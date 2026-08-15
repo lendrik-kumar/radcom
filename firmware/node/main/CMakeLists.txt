@@ -1,0 +1,21 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "packet.c"
+        "radio.c"
+        "router.c"
+        "wifi_ap.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        nvs_flash
+        esp_wifi
+        esp_http_server
+        esp_netif
+        esp_event
+        driver
+        spi_flash
+        lwip
+        json
+        esp_timer
+)

@@ -1,0 +1,2 @@
+source /Users/sanketkamboj/Desktop/radcom/firmware/node/build/bootloader/gdbinit/symbols
+source /Users/sanketkamboj/Desktop/radcom/firmware/node/build/bootloader/gdbinit/connect
