@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "radcom_node",
-    "project_version":    "385e9a9",
+    "project_version":    "baa4c9b-dirty",
     "project_path":       "/Users/sanketkamboj/Desktop/radcom/firmware/node",
     "idf_path":           "/Users/sanketkamboj/esp/esp-idf",
     "build_dir":          "/Users/sanketkamboj/Desktop/radcom/firmware/node/build",

@@ -233,9 +233,12 @@ esp_err_t radio_init(uint8_t node_id, QueueHandle_t rx_q, QueueHandle_t tx_q) {
     }
 
     // 4. Configure LoRa mode
-    sx1278_write_reg(REG_OP_MODE, MODE_SLEEP);
+    sx1278_write_reg(REG_OP_MODE, MODE_SLEEP | MODE_LOW_FREQ);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    sx1278_write_reg(REG_OP_MODE, MODE_LORA | MODE_LOW_FREQ | MODE_SLEEP);
     vTaskDelay(pdMS_TO_TICKS(10));
     sx1278_write_reg(REG_OP_MODE, MODE_LORA | MODE_LOW_FREQ | MODE_STANDBY);
+    vTaskDelay(pdMS_TO_TICKS(10));
 
     // 5. Frequency: 433 MHz -> Frf = 0x6C4000
     sx1278_write_reg(REG_FRF_MSB, 0x6C);
