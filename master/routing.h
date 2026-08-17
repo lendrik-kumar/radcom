@@ -13,6 +13,7 @@
 void    routing_init(void);
 void    routing_attach(const char *uid, uint8_t node_id);
 void    routing_detach(const char *uid);
+void    routing_evict_node(uint8_t node_id);
 uint8_t routing_lookup(const char *uid); /* returns NODE_MASTER(0) = not found */
 int     routing_count(void);
 void    routing_dump(void);

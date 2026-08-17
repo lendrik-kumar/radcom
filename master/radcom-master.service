@@ -3,7 +3,7 @@ Description=Radcom Master Node Daemon
 After=local-fs.target
 
 [Service]
-ExecStart=/usr/local/bin/radcom-master
+ExecStart=/usr/local/bin/radcom-master 1 2
 Restart=always
 RestartSec=5
 User=root

@@ -483,7 +483,7 @@ static void sim_detach(int ws_fd) {
 static void sim_msg(int ws_fd, const char *dst, const char *text) {
     session_t *s = session_find_by_fd(ws_fd);
     if (!s) { stub_ws_send(ws_fd, "error:not_attached"); return; }
-    if (strcmp(s->phone_num, dst) == 0) { stub_ws_send(ws_fd, "self_delivered"); return; }
+    if (strcmp(s->phone_num, dst) == 0) { stub_ws_send(ws_fd, "sent:local"); return; }
     session_t *local = session_find_by_phone(dst);
     if (local) {
         stub_ws_send(local->ws_fd, text);
@@ -532,7 +532,7 @@ TEST(routing_self_message) {
     sim_msg(1, "919111111111", "to_myself");
     EXPECT(lora_out_n == 0);
     EXPECT(ws_out_n   == 1);
-    EXPECT(strstr(ws_out[0].msg, "self") != NULL);
+    EXPECT(strstr(ws_out[0].msg, "sent:local") != NULL);
 }
 
 TEST(routing_msg_before_attach) {

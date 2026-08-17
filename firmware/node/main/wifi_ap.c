@@ -84,7 +84,13 @@ static const char html_page[] =
     "    }\n"
     "    function logMsg(from, text) {\n"
     "      let m = document.getElementById('messages');\n"
-    "      m.innerHTML += `<div class='msg'><b>${from}</b>: ${text}</div>`;\n"
+    "      let div = document.createElement('div');\n"
+    "      div.className = 'msg';\n"
+    "      let b = document.createElement('b');\n"
+    "      b.textContent = from;\n"
+    "      div.appendChild(b);\n"
+    "      div.appendChild(document.createTextNode(': ' + text));\n"
+    "      m.appendChild(div);\n"
     "      m.scrollTop = m.scrollHeight;\n"
     "    }\n"
     "    function connect() {\n"
@@ -109,6 +115,8 @@ static const char html_page[] =
     "          document.getElementById('status').style.color = data.online ? '#0f0' : '#f00';\n"
     "        } else if (data.type === 'sent') {\n"
     "          // Sent confirmation\n"
+    "        } else if (data.type === 'error') {\n"
+    "          logMsg('System Error', data.msg);\n"
     "        }\n"
     "      };\n"
     "      ws.onclose = () => {\n"
@@ -166,7 +174,17 @@ esp_err_t ws_send_json(int ws_fd, const char *json_str) {
         free(resp_arg);
         return ESP_ERR_NO_MEM;
     }
-    return httpd_queue_work(ws_server, ws_send_json_async_handler, resp_arg);
+    esp_err_t ret = httpd_queue_work(ws_server, ws_send_json_async_handler, resp_arg);
+    if (ret != ESP_OK) {
+        free(resp_arg->json_str);
+        free(resp_arg);
+    }
+    return ret;
+}
+
+void ws_disconnect(int ws_fd) {
+    if (!ws_server) return;
+    httpd_sess_trigger_close(ws_server, ws_fd);
 }
 
 static esp_err_t catch_all_handler(httpd_req_t *req) {

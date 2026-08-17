@@ -40,7 +40,7 @@
 
 /* Hardcoded Node ID for bench testing (1 to 254). 
  * Set to 0 to require NVS provisioning via HTTP. */
-#define HW_NODE_ID    1
+#define HW_NODE_ID    2
 
 /* SPI clock speed. SX1278 max is 10 MHz; 8 MHz gives headroom on long wires. */
 #define HW_SPI_CLK_HZ  8000000
@@ -147,7 +147,7 @@
  * ══════════════════════════════════════════════════════════════════════════════ */
 
 /* WiFi network name. All nodes must share the same SSID for seamless roaming. */
-#define HW_AP_SSID         "radcom"
+#define HW_AP_SSID         "radcom2"
 
 /* WPA2 passphrase. Minimum 8 characters, or empty string for OPEN network. */
 #define HW_AP_PASS         "gdgtiet1"

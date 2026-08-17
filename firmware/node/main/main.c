@@ -21,6 +21,7 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 
 #include "packet.h"
 #include "radio.h"
@@ -84,12 +85,15 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(err == ESP_ERR_NVS_NO_FREE_PAGES ? ESP_OK : err);
 
-    /* Read node_id. If not provisioned, use 0 as sentinel — radio_init will
-     * skip LoRa operations and wifi_ap will serve a provisioning page. */
+    /* Read node_id. If not provisioned, derive a stable fallback from MAC address
+     * (between 128 and 250) to prevent RF collisions between unprovisioned nodes. */
     uint8_t node_id = HW_NODE_ID;
     if (node_id == 0) {
         if (nvs_read_node_id(&node_id) != ESP_OK) {
-            ESP_LOGW(TAG, "node_id not provisioned — serving config portal only");
+            uint8_t mac[6];
+            esp_read_mac(mac, ESP_MAC_WIFI_STA);
+            node_id = 128 + (mac[5] % 123); /* Maps to 128..250 */
+            ESP_LOGW(TAG, "node_id not provisioned — using MAC-derived fallback ID: %d", node_id);
             ESP_LOGW(TAG, "POST to http://192.168.4.1/config with {\"node_id\":N} to provision");
         } else {
             ESP_LOGI(TAG, "node_id=%d (from NVS)", node_id);
@@ -124,7 +128,11 @@ void app_main(void) {
     /* ── Create tasks ─────────────────────────────────────────────────────── */
     if (node_id > 0) {
         /* lora_task only starts when radio is healthy and node is provisioned. */
-        BaseType_t rc = xTaskCreate(lora_task, "lora", 4096, NULL, 6, &lora_task_handle);
+#ifdef CONFIG_FREERTOS_UNICORE
+        BaseType_t rc = xTaskCreatePinnedToCore(lora_task, "lora", 4096, NULL, 15, &lora_task_handle, 0);
+#else
+        BaseType_t rc = xTaskCreatePinnedToCore(lora_task, "lora", 4096, NULL, 15, &lora_task_handle, 1);
+#endif
         ESP_ERROR_CHECK(rc == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     }
 

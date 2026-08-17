@@ -89,6 +89,7 @@ static void poll_node(node_state_t *ns) {
             ns->active = 0;
             ns->keepalive_counter = POLLER_KEEPALIVE_CYCLES;
             syslog(LOG_WARNING, "poll: node %d absent after %d timeouts", ns->node_id, ns->absent_streak);
+            routing_evict_node(ns->node_id);
         }
         return;
     }
@@ -137,9 +138,17 @@ static void poll_node(node_state_t *ns) {
         /* We send this ACK, which blocks until TxDone, then auto-re-enters RX */
         radio_send(&ack);
 
-        /* Route message to destination */
         uint8_t dest_node = routing_lookup(resp.dst_uid);
-        if (dest_node != NODE_MASTER) {
+        if (dest_node == resp.node_id) {
+            /* If the destination is really on the source node, the node should
+             * have delivered locally and never used LoRa. Treat this as stale
+             * master presence state; otherwise the message loops back to the
+             * same node and can be shown to the sender or lost after a false ACK.
+             */
+            routing_detach(resp.dst_uid);
+            syslog(LOG_WARNING, "poll: stale route for %s at source node %d; storing offline",
+                   resp.dst_uid, resp.node_id);
+        } else if (dest_node != NODE_MASTER) {
             syslog(LOG_INFO, "poll: routing %s→%s via node %d",
                    resp.src_uid, resp.dst_uid, dest_node);
         } else {
@@ -157,6 +166,11 @@ static void poll_node(node_state_t *ns) {
             syslog(LOG_WARNING, "poll: PRESENCE with invalid uid '%s'", resp.src_uid);
             break;
         }
+        
+        radio_pkt_t ack;
+        pkt_make_ack(&ack, NODE_MASTER, resp.msg_id);
+        radio_send(&ack);
+        
         if (event == PRESENCE_ATTACH) {
             routing_attach(resp.src_uid, ns->node_id);
             syslog(LOG_NOTICE, "presence: ATTACH %s @ node %d (total online=%d)",

@@ -47,6 +47,20 @@ void routing_detach(const char *uid) {
     }
 }
 
+void routing_evict_node(uint8_t node_id) {
+    int evicted = 0;
+    for (int i = 0; i < TABLE_SIZE; i++) {
+        if (s_table[i].uid[0] != '\0' && s_table[i].node_id == node_id) {
+            s_table[i].node_id = 255;
+            s_count--;
+            evicted++;
+        }
+    }
+    if (evicted > 0) {
+        syslog(LOG_INFO, "routing: evicted %d users from offline node %d", evicted, node_id);
+    }
+}
+
 uint8_t routing_lookup(const char *uid) {
     uint32_t i = hash(uid);
     for (int p = 0; p < TABLE_SIZE; p++) {

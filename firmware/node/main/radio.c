@@ -1,6 +1,7 @@
 #include "radio.h"
 #include "packet.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
@@ -246,8 +247,8 @@ esp_err_t radio_init(uint8_t node_id, QueueHandle_t rx_q, QueueHandle_t tx_q) {
     sx1278_write_reg(REG_FRF_LSB, 0x00);
 
     // 6. TX Power via PA_BOOST
-    sx1278_write_reg(REG_PA_CONFIG, 0xFF); // PaSelect=1, MaxPower=7, OutputPower=15
-    sx1278_write_reg(REG_PA_DAC, 0x87);    // enable +20dBm
+    sx1278_write_reg(REG_PA_CONFIG, 0x8C); // PaSelect=1, MaxPower=4, OutputPower=12 (+14dBm)
+    sx1278_write_reg(REG_PA_DAC, 0x84);    // Default, disable +20dBm boost
 
     // 7. Modem Configuration
     sx1278_write_reg(REG_MODEM_CONFIG_1, 0x72); // BW=125kHz, CR=4/5, Explicit header
@@ -267,7 +268,7 @@ esp_err_t radio_init(uint8_t node_id, QueueHandle_t rx_q, QueueHandle_t tx_q) {
         .intr_type = GPIO_INTR_POSEDGE,
         .mode = GPIO_MODE_INPUT,
         .pin_bit_mask = (1ULL << RADIO_PIN_DIO0),
-        .pull_down_en = 0,
+        .pull_down_en = 1, // Prevent floating pin interrupt storms
         .pull_up_en = 0,
     };
     gpio_config(&dio_conf);
@@ -287,8 +288,18 @@ void lora_task(void *arg) {
     ESP_LOGI(TAG, "lora_task started");
     sx1278_start_rx();
 
+    esp_task_wdt_add(NULL);
+
     while (1) {
-        uint32_t notified = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(POLL_ABSENT_TIMEOUT_MS));
+        uint32_t notified = 0;
+        int remaining_ms = POLL_ABSENT_TIMEOUT_MS;
+        
+        while (remaining_ms > 0 && notified == 0) {
+            int chunk_ms = (remaining_ms > 2000) ? 2000 : remaining_ms;
+            notified = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(chunk_ms));
+            esp_task_wdt_reset();
+            remaining_ms -= chunk_ms;
+        }
         
         if (notified == 0) {
             master_absent = true;
@@ -303,6 +314,7 @@ void lora_task(void *arg) {
         if (irq == 0) {
             ESP_LOGD(TAG, "spurious DIO0 edge");
             sx1278_start_rx();
+            vTaskDelay(pdMS_TO_TICKS(10)); // Yield to prevent WDT if pin floats
             continue;
         }
 
@@ -347,7 +359,7 @@ void lora_task(void *arg) {
                         continue;
                     }
 
-                    if (pkt.msg_id == s_last_rx_msg_id) {
+                    if (pkt.payload_len == 0 && pkt.msg_id == s_last_rx_msg_id) {
                         ESP_LOGD(TAG, "Duplicate msg_id=%d", pkt.msg_id);
                     } else {
                         s_last_rx_msg_id = pkt.msg_id;
@@ -359,19 +371,36 @@ void lora_task(void *arg) {
                     }
 
                     radio_pkt_t reply;
-                    if (xQueueReceive(s_tx_queue, &reply, 0) == pdTRUE) {
-                        reply.ack_id = pkt.msg_id;
+                    if (xQueuePeek(s_tx_queue, &reply, 0) == pdTRUE) {
+                        if (reply.ack_id == 0) {
+                            reply.ack_id = pkt.msg_id;
+                        }
                         if (sx1278_send(&reply) != ESP_OK) {
                             ESP_LOGE(TAG, "Failed to send queued msg, sending empty ACK");
                             radio_pkt_t ack;
                             pkt_make_ack(&ack, s_node_id, pkt.msg_id);
                             sx1278_send(&ack);
+                        } else {
+                            ESP_LOGI(TAG, "TX msg_id=%d in TDMA slot (waiting for ACK)", reply.msg_id);
                         }
                     } else {
                         radio_pkt_t ack;
                         pkt_make_ack(&ack, s_node_id, pkt.msg_id);
                         sx1278_send(&ack);
                     }
+                    break;
+
+                case PKT_ACK:
+                    if (pkt.node_id == NODE_MASTER) {
+                        radio_pkt_t head;
+                        if (xQueuePeek(s_tx_queue, &head, 0) == pdTRUE) {
+                            if (head.msg_id == pkt.ack_id) {
+                                xQueueReceive(s_tx_queue, &head, 0); // Remove from queue
+                                ESP_LOGI(TAG, "Master ACKed msg_id=%d, removed from tx_queue", head.msg_id);
+                            }
+                        }
+                    }
+                    sx1278_start_rx();
                     break;
 
                 default:
@@ -386,5 +415,9 @@ void lora_task(void *arg) {
             sx1278_start_rx();
             continue;
         }
+
+        /* Catch any unhandled IRQ flags to prevent tight loop */
+        sx1278_start_rx();
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }

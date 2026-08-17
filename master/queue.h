@@ -15,6 +15,7 @@ int   queue_push(const char *dst_uid, const radio_pkt_t *pkt);
 int   queue_pop_for_node(uint8_t node_id, radio_pkt_t *out, int64_t *row_id);
 void  queue_delete(int64_t row_id);
 void  queue_expire(void);
+void  queue_enforce_limit(void);
 int   queue_count(void);
 void  queue_close(void);
 void queue_expire_all(void); /* test use only */

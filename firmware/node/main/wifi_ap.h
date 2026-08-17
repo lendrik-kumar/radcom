@@ -68,6 +68,7 @@ esp_err_t wifi_ap_init(QueueHandle_t evt_q);
  * Returns ESP_OK or error.
  */
 esp_err_t ws_send_json(int ws_fd, const char *json_str);
+void ws_disconnect(int ws_fd);
 
 /**
  * FreeRTOS task entry. Priority 4, stack 4096.

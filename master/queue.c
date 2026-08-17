@@ -56,6 +56,9 @@ int queue_push(const char *dst_uid, const radio_pkt_t *pkt) {
         syslog(LOG_ERR, "queue_push: %s", sqlite3_errmsg(s_db)); return -1;
     }
     syslog(LOG_INFO, "queue: stored for %s (ttl=%d min)", dst_uid, ttl_minutes);
+    
+    queue_enforce_limit();
+    
     return 0;
 }
 
@@ -139,4 +142,22 @@ void queue_expire_all(void) {
     char *err = NULL;
     sqlite3_exec(s_db, "DELETE FROM queue", NULL, NULL, &err);
     if (err) { syslog(LOG_ERR, "queue_expire_all: %s", err); sqlite3_free(err); }
+}
+
+void queue_enforce_limit(void) {
+    if (!s_db) return;
+    /* Hard cap of 10,000 messages in the offline queue */
+    int limit = 10000;
+    int current = queue_count();
+    if (current > limit) {
+        int excess = current - limit;
+        sqlite3_stmt *st;
+        if (sqlite3_prepare_v2(s_db, "DELETE FROM queue WHERE id IN (SELECT id FROM queue ORDER BY id ASC LIMIT ?)", -1, &st, NULL) == SQLITE_OK) {
+            sqlite3_bind_int(st, 1, excess);
+            sqlite3_step(st);
+            int deleted = sqlite3_changes(s_db);
+            sqlite3_finalize(st);
+            syslog(LOG_WARNING, "queue: enforced limit, deleted %d oldest message(s)", deleted);
+        }
+    }
 }

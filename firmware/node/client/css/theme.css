@@ -1,0 +1,45 @@
+:root {
+  /* Google Type Material 3 Palette */
+  --primary: #1A73E8;          /* Google Blue */
+  --on-primary: #FFFFFF;
+  --secondary: #34A853;        /* Google Green */
+  --error: #D93025;            /* Google Red */
+  --surface: #FFFFFF;
+  --surface-dim: #F1F3F4;
+  --on-surface: #202124;
+  --on-surface-var: #5F6368;
+  --outline: #DADCE0;
+  --warning: #F9AB00;          /* Google Yellow */
+
+  --bg-color: #F8F9FA;
+  
+  /* Typography */
+  --font-family: 'Roboto', sans-serif;
+  
+  /* Shapes */
+  --radius-sm: 4px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --radius-xl: 24px;
+  
+  /* Z-Index layers */
+  --z-app-bar: 100;
+  --z-modal: 1000;
+  --z-toast: 2000;
+}
+
+@font-face {
+  font-family: 'Roboto';
+  font-style: normal;
+  font-weight: 400;
+  src: url('../assets/roboto-regular.woff2') format('woff2');
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Roboto';
+  font-style: normal;
+  font-weight: 500;
+  src: url('../assets/roboto-medium.woff2') format('woff2');
+  font-display: swap;
+}

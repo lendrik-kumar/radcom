@@ -233,8 +233,8 @@ int radio_init(void) {
     sx1278_write_reg(REG_FRF_LSB, 0x00);
 
     /* TX via PA_BOOST (Ra-02 wired to PA_BOOST) */
-    sx1278_write_reg(REG_PA_CONFIG, 0xFF); /* PaSelect=1, MaxPower=7, OutputPower=15 */
-    sx1278_write_reg(REG_PA_DAC,    0x87); /* +20dBm mode */
+    sx1278_write_reg(REG_PA_CONFIG, 0x80); /* PaSelect=1, MaxPower=4, OutputPower=0 (+2dBm total, absolute minimum current) */
+    sx1278_write_reg(REG_PA_DAC,    0x84); /* Default PA_DAC, no +20dBm boost */
 
     /* Modem config — identical to ESP32 node */
     sx1278_write_reg(REG_MODEM_CONFIG_1,  0x72); /* BW=125kHz, CR=4/5, explicit header */
@@ -265,6 +265,12 @@ int radio_send(const radio_pkt_t *pkt) {
     size_t len = pkt_serialize(pkt, buf, sizeof(buf));
     if (len == 0) { syslog(LOG_ERR, "radio_send: pkt_serialize failed"); return -1; }
 
+    uint8_t current_op = sx1278_read_reg(REG_OP_MODE);
+    if ((current_op & MODE_LORA) == 0) {
+        syslog(LOG_CRIT, "radio_send: chip browned-out (OP=0x%02x)! Auto-recovering...", current_op);
+        if (radio_init() < 0) return -1;
+    }
+
     sx1278_write_reg(REG_OP_MODE,       MODE_LORA | MODE_LOW_FREQ | MODE_STANDBY);
     sx1278_write_reg(REG_FIFO_ADDR_PTR, sx1278_read_reg(REG_FIFO_TX_BASE_ADDR));
     sx1278_write_fifo(buf, len);
@@ -275,23 +281,38 @@ int radio_send(const radio_pkt_t *pkt) {
     sx1278_write_reg(REG_OP_MODE,         MODE_LORA | MODE_LOW_FREQ | MODE_TX);
 
     /* Block until TxDone (DIO0 rising edge), max 3 seconds */
-    struct pollfd pfd = { .fd = dio0_fd, .events = POLLIN };
-    int ret = poll(&pfd, 1, 3000);
-    if (ret <= 0) {
-        int lvl = gpiod_line_get_value(line_dio0);
-        uint8_t flags = sx1278_read_reg(REG_IRQ_FLAGS);
-        uint8_t op = sx1278_read_reg(REG_OP_MODE);
-        syslog(LOG_WARNING, "radio_send: TxDone timeout, DIO0=%d IRQ=0x%02x OP=0x%02x", lvl, flags, op);
-        sx1278_write_reg(REG_IRQ_FLAGS, 0xFF);
-        sx1278_start_rx_internal();
-        return -1;
+    uint32_t start_time = (uint32_t)time(NULL);
+    while (1) {
+        uint32_t elapsed = (uint32_t)time(NULL) - start_time;
+        if (elapsed >= 3) {
+            int lvl = gpiod_line_get_value(line_dio0);
+            uint8_t flags = sx1278_read_reg(REG_IRQ_FLAGS);
+            uint8_t op = sx1278_read_reg(REG_OP_MODE);
+            syslog(LOG_WARNING, "radio_send: TxDone timeout, DIO0=%d IRQ=0x%02x OP=0x%02x", lvl, flags, op);
+            sx1278_write_reg(REG_IRQ_FLAGS, 0xFF);
+            sx1278_start_rx_internal();
+            return -1;
+        }
+
+        struct pollfd pfd = { .fd = dio0_fd, .events = POLLIN };
+        int ret = poll(&pfd, 1, (3 - elapsed) * 1000);
+        if (ret <= 0) continue;
+
+        gpio_clear_events(); /* Consume the event we just woke up for */
+        
+        uint8_t irq = sx1278_read_reg(REG_IRQ_FLAGS);
+        if (irq & IRQ_TX_DONE_MASK) {
+            sx1278_write_reg(REG_IRQ_FLAGS, IRQ_TX_DONE_MASK);
+            break; /* Successfully finished TX */
+        }
+        
+        if (irq == 0) {
+            syslog(LOG_DEBUG, "radio_send: ignoring spurious DIO0 edge");
+        } else {
+            syslog(LOG_DEBUG, "radio_send: unexpected IRQ during TX: 0x%02x", irq);
+            sx1278_write_reg(REG_IRQ_FLAGS, irq);
+        }
     }
-    gpio_clear_events(); /* Consume the event we just woke up for */
-    /* Clear IRQ flags and log */
-    uint8_t irq = sx1278_read_reg(REG_IRQ_FLAGS);
-    sx1278_write_reg(REG_IRQ_FLAGS, 0xFF);
-    if (!(irq & IRQ_TX_DONE_MASK))
-        syslog(LOG_DEBUG, "radio_send: unexpected IRQ after TX: 0x%02x", irq);
 
     /* Return to RX standby — DIO0 mapping back to RxDone */
     sx1278_start_rx_internal();

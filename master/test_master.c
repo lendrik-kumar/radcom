@@ -23,13 +23,46 @@
 #include <unistd.h>
 #include <syslog.h>
 #include <time.h>
+#include <signal.h>
 
 #include "packet.h"
 #include "routing.h"
 #include "queue.h"
+#include "poller.h"
+#include "radio.h"
 
 /* ── Minimal test framework ── */
 static int s_pass = 0, s_fail = 0;
+volatile sig_atomic_t keep_running = 1;
+
+static radio_pkt_t s_mock_rx_q[16];
+static int s_mock_rx_head = 0, s_mock_rx_tail = 0;
+static radio_pkt_t s_mock_tx_q[16];
+static int s_mock_tx_head = 0, s_mock_tx_tail = 0;
+
+int radio_send(const radio_pkt_t *pkt) {
+    if (s_mock_tx_tail < 16) {
+        s_mock_tx_q[s_mock_tx_tail++] = *pkt;
+        return 0;
+    }
+    return -1;
+}
+int radio_wait_rx(radio_pkt_t *out, int timeout_ms) {
+    (void)timeout_ms;
+    if (s_mock_rx_head < s_mock_rx_tail) {
+        *out = s_mock_rx_q[s_mock_rx_head++];
+        /* Stop the poller after 1 receive for tests to not loop infinitely */
+        keep_running = 0;
+        return 10; /* Fake valid length */
+    }
+    /* Timeout */
+    keep_running = 0; /* Stop after timeout too, tests will control loop manually */
+    return 0; 
+}
+void radio_start_rx(void) {
+}
+
+
 #define TEST(name)   do { printf("\n[TEST] %s\n", name); } while(0)
 #define PASS(msg)    do { printf("  PASS: %s\n", msg); s_pass++; } while(0)
 #define FAIL(msg)    do { printf("  FAIL: %s  (line %d)\n", msg, __LINE__); s_fail++; } while(0)
@@ -277,6 +310,11 @@ static void test_routing_detach_reattach(void) {
     CHECK(routing_count() == 1, "count == 1");
 }
 
+static void count_cb(const char *uid, void *ctx) {
+    (void)uid;
+    (*(int*)ctx)++;
+}
+
 static void test_routing_each_at_node(void) {
     TEST("Routing — routing_each_at_node iterates correct UIDs");
     routing_init();
@@ -287,10 +325,6 @@ static void test_routing_each_at_node(void) {
 
     int found = 0;
     /* Count how many UIDs routing_each_at_node reports for node 1 */
-    void count_cb(const char *uid, void *ctx) {
-        (void)uid;
-        (*(int*)ctx)++;
-    }
     routing_each_at_node(1, count_cb, &found);
     CHECK(found == 3, "routing_each_at_node returns 3 UIDs for node 1");
 
@@ -444,7 +478,7 @@ static void test_queue_ttl_expiry(void) {
         #include <sqlite3.h>
         sqlite3 *db;
         sqlite3_open(TEST_DB, &db);
-        sqlite3_exec(db, "UPDATE queue SET ttl_expires=1 WHERE payload='Expire me'", NULL, NULL, NULL);
+        sqlite3_exec(db, "UPDATE queue SET ttl_expires=1 WHERE CAST(payload AS TEXT)='Expire me'", NULL, NULL, NULL);
         sqlite3_close(db);
     }
 
@@ -857,6 +891,138 @@ static void test_wire_msg_id_wraparound(void) {
     CHECK(id == 0, "uint8_t wraps 255→0");
 }
 
+static void test_poller_arq_guarantee(void) {
+    TEST("Integration — Stop-and-Wait ARQ (Guaranteed RF Uplink)");
+    routing_init();
+    routing_attach("911234567890", 1);
+    s_mock_rx_head = 0; s_mock_rx_tail = 0;
+    s_mock_tx_head = 0; s_mock_tx_tail = 0;
+
+    /* Simulate node 1 sending PKT_DATA to master in response to POLL */
+    radio_pkt_t pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.type = PKT_DATA;
+    pkt.ttl = 30;
+    strncpy(pkt.src_uid, "911234567890", UID_MAX_LEN);
+    strncpy(pkt.dst_uid, "919876543210", UID_MAX_LEN);
+    pkt.payload_len = 8;
+    memcpy(pkt.payload, "ARQ Test", 8);
+    pkt.msg_id = 42;
+    pkt.node_id = 1;
+    s_mock_rx_q[s_mock_rx_tail++] = pkt;
+
+    /* Run the poller for one cycle on node 1 */
+    keep_running = 1;
+    poller_run(); /* Will return because our radio_wait_rx mock sets keep_running=0 */
+
+    /* The master should have sent a PKT_POLL first, then received our PKT_DATA, 
+       and then sent a PKT_ACK. So s_mock_tx_q should have 2 packets. */
+    CHECK(s_mock_tx_tail == 2, "Master sent 2 packets (POLL and ACK)");
+    if (s_mock_tx_tail >= 2) {
+        radio_pkt_t ack = s_mock_tx_q[1];
+        CHECK(ack.type == PKT_ACK, "Second packet is PKT_ACK");
+        CHECK(ack.ack_id == 42, "ack_id matches Node's msg_id");
+        CHECK(ack.node_id == NODE_MASTER, "ACK comes from NODE_MASTER");
+    }
+}
+
+static void test_packet_data_oversize(void) {
+    TEST("Wire — PKT_DATA with payload_len > PAYLOAD_MAX (serialization)");
+    radio_pkt_t pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.type = PKT_DATA;
+    pkt.payload_len = PAYLOAD_MAX + 1; /* Invalid */
+    uint8_t buf[256];
+    size_t len = pkt_serialize(&pkt, buf, sizeof(buf));
+    CHECK(len == 0, "Serialization fails gracefully for oversized payload");
+}
+
+static void test_poller_wrong_node_reply(void) {
+    TEST("Poller — Node replies to another node's POLL (should ignore)");
+    s_mock_rx_head = 0; s_mock_rx_tail = 0;
+    s_mock_tx_head = 0; s_mock_tx_tail = 0;
+
+    /* We are polling node 1, but we simulate a reply from node 2 */
+    radio_pkt_t pkt;
+    pkt_make_ack(&pkt, 2, 99);
+    s_mock_rx_q[s_mock_rx_tail++] = pkt;
+
+    keep_running = 1;
+    poller_run();
+    
+    /* Master should ignore node 2's reply. No ACK sent, no queue processing. */
+    CHECK(s_mock_tx_tail == 1, "Master only sent the initial POLL, ignored wrong node reply");
+}
+
+static void test_routing_table_full(void) {
+    TEST("Routing — Hash table full capacity collision handling");
+    routing_init();
+    
+    char uid[16];
+    for (int i = 0; i < ROUTING_MAX_ENTRIES * 2 + 5; i++) {
+        snprintf(uid, sizeof(uid), "910000%06d", i);
+        routing_attach(uid, 1);
+    }
+    
+    /* The table size is ROUTING_MAX_ENTRIES * 2. It should max out gracefully. */
+    CHECK(routing_count() == ROUTING_MAX_ENTRIES * 2, "Routing count capped at TABLE_SIZE");
+    
+    /* Overwrite an existing entry to ensure update works when full */
+    routing_attach("910000000000", 2);
+    CHECK(routing_lookup("910000000000") == 2, "Can update existing user even when full");
+}
+
+static void test_queue_limit_enforcement(void) {
+    TEST("Queue — Enforce hard cap limit of 10,000 messages");
+    unlink("test_limit.db");
+    unlink("test_limit.db-wal");
+    unlink("test_limit.db-shm");
+    queue_init("test_limit.db");
+
+    radio_pkt_t pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.type = PKT_DATA;
+    pkt.ttl = 30;
+    strncpy(pkt.src_uid, "911111111111", UID_MAX_LEN);
+    strncpy(pkt.dst_uid, "912222222222", UID_MAX_LEN);
+    pkt.payload_len = 10;
+    memcpy(pkt.payload, "Limit Test", 10);
+    
+    for (int i = 0; i < 10005; i++) {
+        pkt.msg_id = i % 256;
+        if (queue_push("912222222222", &pkt) != 0) {
+            printf("  DEBUG: queue_push failed at i=%d\n", i);
+            /* Let's just break, the DB is probably closed or table not created? */
+            break;
+        }
+    }
+    
+    int count = queue_count();
+    printf("  DEBUG: count=%d\n", count);
+    CHECK(count == 10000, "Queue correctly clamped to 10,000 maximum messages");
+    
+    queue_close();
+}
+
+static void test_poller_garbage_reply(void) {
+    TEST("Poller — Node replies with garbage/invalid type");
+    s_mock_rx_head = 0; s_mock_rx_tail = 0;
+    s_mock_tx_head = 0; s_mock_tx_tail = 0;
+
+    /* Simulate a completely invalid packet type from the node */
+    radio_pkt_t pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.type = 0xFF; /* Invalid */
+    pkt.node_id = 1; /* Correct node so it gets past the node_id check */
+    s_mock_rx_q[s_mock_rx_tail++] = pkt;
+
+    keep_running = 1;
+    poller_run();
+
+    /* Should be ignored silently (only POLL sent) */
+    CHECK(s_mock_tx_tail == 1, "Garbage reply safely ignored");
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * MAIN
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -909,9 +1075,35 @@ int main(void) {
     test_wire_max_uid_length();
     test_wire_msg_id_wraparound();
 
+    /* Section 6: Poller */
+    TEST("Poller — Timeout triggers absent streak and eviction");
+    unlink(TEST_DB);
+    routing_init();
+    queue_init(TEST_DB);
+    routing_attach("911111111111", 1); // User at Node 1
+    
+    uint8_t nodes[1] = { 1 };
+    poller_init(nodes, 1);
+    
+    // Test 5 timeouts
+    for (int i = 0; i < POLLER_ABSENT_THRESHOLD; i++) {
+        keep_running = 1;
+        s_mock_rx_head = s_mock_rx_tail = 0; // force timeout
+        poller_run();
+    }
+    CHECK(routing_count() == 0, "routing_evict_node called, user removed");
+
+    /* Additional edge cases & in-depth integration tests */
+    test_poller_arq_guarantee();
+    test_packet_data_oversize();
+    test_poller_wrong_node_reply();
+    test_routing_table_full();
+    test_queue_limit_enforcement();
+    test_poller_garbage_reply();
+
     printf("\n==========================================================\n");
     printf("  Results: %d passed, %d failed\n", s_pass, s_fail);
-    printf("==========================================================\n");
+    printf("==========================================================\n\n");
 
     unlink(TEST_DB);
     return s_fail > 0 ? 1 : 0;

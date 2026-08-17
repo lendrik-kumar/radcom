@@ -15,7 +15,7 @@ volatile int keep_running = 1;
 
 static void sig_handler(int sig) { (void)sig; keep_running = 0; }
 
-int main(void) {
+int main(int argc, char **argv) {
     openlog("radcom-master", LOG_PID | LOG_CONS, LOG_DAEMON);
     syslog(LOG_NOTICE, "radcom master starting");
 
@@ -53,12 +53,23 @@ int main(void) {
     }
     syslog(LOG_NOTICE, "queue open: %d messages pending", queue_count());
 
-    /* ── Node list ──
-     * Add node IDs as you deploy more hardware.
-     * node_count=1 for initial bench test with Node 1 only. */
-    uint8_t nodes[] = { 1, 2, 3, 4, 5 };
-    int node_count = 1;
+    uint8_t nodes[POLLER_MAX_NODES];
+    int node_count = 0;
+    
+    for (int i = 1; i < argc && node_count < POLLER_MAX_NODES; i++) {
+        int id = atoi(argv[i]);
+        if (id > 0 && id < 255) {
+            nodes[node_count++] = (uint8_t)id;
+        }
+    }
+    
+    if (node_count == 0) {
+        /* Default to 1, 2, 3, 4, 5 if no arguments provided */
+        nodes[0] = 1; nodes[1] = 2; nodes[2] = 3; nodes[3] = 4; nodes[4] = 5;
+        node_count = 5;
+    }
 
+    syslog(LOG_NOTICE, "polling %d nodes", node_count);
     poller_init(nodes, node_count);
     radio_start_rx();
     poller_run(); /* blocks until SIGINT/SIGTERM */

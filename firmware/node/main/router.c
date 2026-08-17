@@ -31,6 +31,8 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
+#include "cJSON.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -89,17 +91,19 @@ static session_t *session_alloc(void) {
 
 /* ── Outbound: enqueue a packet for the next POLL slot ───────────────────── */
 
-static void enqueue_tx(radio_pkt_t *pkt) {
+static bool enqueue_tx(radio_pkt_t *pkt) {
     pkt->node_id = my_node_id;
     pkt->msg_id  = next_msg_id++;
     if (next_msg_id == 0) next_msg_id = 1;  /* skip 0 — reserved for "no msg" */
 
-    if (xQueueSend(lora_tx_q, pkt, 0) != pdTRUE) {
+    if (xQueueSend(lora_tx_q, pkt, pdMS_TO_TICKS(100)) != pdTRUE) {
         /* tx queue full: master polling slower than messages arriving.
          * Drop the outgoing packet — phones will retry at the app layer.
          * ponytail: no in-RAM store-and-forward on the node; master handles persistence. */
         ESP_LOGW(TAG, "tx queue full — dropped pkt type=0x%02x", pkt->type);
+        return false;
     }
+    return true;
 }
 
 /* ── Handle: phone attached ──────────────────────────────────────────────── */
@@ -146,7 +150,12 @@ static void handle_attach(const ws_event_t *evt) {
     /* Notify master this phone is now reachable here. */
     radio_pkt_t pkt;
     pkt_make_presence(&pkt, my_node_id, s->phone_num, PRESENCE_ATTACH);
-    enqueue_tx(&pkt);
+    if (!enqueue_tx(&pkt)) {
+        ESP_LOGW(TAG, "failed to enqueue PRESENCE_ATTACH, disconnecting %s", s->phone_num);
+        ws_disconnect(evt->ws_fd);
+        s->active = false;
+        s->ws_fd = 0;
+    }
 }
 
 /* ── Handle: phone detached ──────────────────────────────────────────────── */
@@ -186,11 +195,23 @@ static void handle_outgoing_msg(const ws_event_t *evt) {
 
     /* Self-message: same src and dst — deliver locally, skip LoRa. */
     if (strncmp(s->phone_num, evt->dst_uid, UID_MAX_LEN) == 0) {
-        char buf[PAYLOAD_MAX + 64];
-        snprintf(buf, sizeof(buf),
-                 "{\"type\":\"msg\",\"from\":\"%s\",\"text\":\"%.*s\"}",
-                 s->phone_num, (int)evt->text_len, evt->text);
-        ws_send_json(evt->ws_fd, buf);
+        cJSON *root = cJSON_CreateObject();
+        cJSON_AddStringToObject(root, "type", "msg");
+        cJSON_AddStringToObject(root, "from", s->phone_num);
+        char *tmp = malloc(evt->text_len + 1);
+        if (tmp) {
+            memcpy(tmp, evt->text, evt->text_len);
+            tmp[evt->text_len] = '\0';
+            cJSON_AddStringToObject(root, "text", tmp);
+        }
+        char *json_str = cJSON_PrintUnformatted(root);
+        if (json_str) {
+            ws_send_json(evt->ws_fd, json_str);
+            free(json_str);
+        }
+        if (tmp) free(tmp);
+        cJSON_Delete(root);
+        
         ESP_LOGD(TAG, "self-message delivered locally for %s", s->phone_num);
         return;
     }
@@ -198,33 +219,49 @@ static void handle_outgoing_msg(const ws_event_t *evt) {
     /* Check if destination is on THIS node — deliver locally without LoRa. */
     session_t *dst = session_find_by_phone(evt->dst_uid);
     if (dst) {
-        char buf[PAYLOAD_MAX + 64];
-        snprintf(buf, sizeof(buf),
-                 "{\"type\":\"msg\",\"from\":\"%s\",\"text\":\"%.*s\"}",
-                 s->phone_num, (int)evt->text_len, evt->text);
-        ws_send_json(dst->ws_fd, buf);
+        cJSON *root = cJSON_CreateObject();
+        cJSON_AddStringToObject(root, "type", "msg");
+        cJSON_AddStringToObject(root, "from", s->phone_num);
+        char *tmp = malloc(evt->text_len + 1);
+        if (tmp) {
+            memcpy(tmp, evt->text, evt->text_len);
+            tmp[evt->text_len] = '\0';
+            cJSON_AddStringToObject(root, "text", tmp);
+        }
+        char *json_str = cJSON_PrintUnformatted(root);
+        if (json_str) {
+            ws_send_json(dst->ws_fd, json_str);
+            free(json_str);
+        }
+        if (tmp) free(tmp);
+        cJSON_Delete(root);
         /* Tell sender it was delivered. */
         ws_send_json(evt->ws_fd, "{\"type\":\"sent\",\"local\":true}");
         ESP_LOGI(TAG, "local delivery %s→%s", s->phone_num, evt->dst_uid);
         return;
     }
 
+    static uint8_t s_next_msg_id = 1;
+
     /* Remote delivery — queue for next POLL slot. */
     radio_pkt_t pkt;
     memset(&pkt, 0, sizeof(pkt));
     pkt.type = PKT_DATA;
+    pkt.msg_id = s_next_msg_id++;
+    if (s_next_msg_id == 0) s_next_msg_id = 1; /* Skip 0 */
     pkt.ttl  = 30;  /* 30 minute expiry on master queue */
     strncpy(pkt.src_uid, s->phone_num, UID_MAX_LEN);
     strncpy(pkt.dst_uid, evt->dst_uid,  UID_MAX_LEN);
     pkt.payload_len = evt->text_len;
     memcpy(pkt.payload, evt->text, evt->text_len);
 
-    enqueue_tx(&pkt);
+    if (!enqueue_tx(&pkt)) {
+        ws_send_json(evt->ws_fd, "{\"type\":\"error\",\"code\":\"busy\",\"msg\":\"Queue full, message dropped. Please retry later.\"}");
+        ESP_LOGW(TAG, "dropped %s→%s len=%d (tx queue full)", s->phone_num, evt->dst_uid, evt->text_len);
+        return;
+    }
 
-    /* Optimistic "sent" — we'll tell the phone when master acks in 3-hop mode.
-     * For now send queued confirmation so phone UX isn't blocked.
-     * ponytail: true delivery receipt requires tracking msg_id and waiting for ACK;
-     * upgrade path: add a pending_ack map keyed by msg_id. */
+    /* For now send queued confirmation so phone UX isn't blocked. */
     ws_send_json(evt->ws_fd, "{\"type\":\"queued\"}");
 
     ESP_LOGI(TAG, "queued %s→%s len=%d", s->phone_num, evt->dst_uid, evt->text_len);
@@ -258,13 +295,27 @@ static void handle_lora_rx(const radio_pkt_t *pkt) {
                 break;
             }
 
-            /* Deliver to phone via WebSocket. */
-            char buf[PAYLOAD_MAX + 64];
-            /* Escape simple quotes in text — cJSON not needed for this template. */
-            snprintf(buf, sizeof(buf),
-                     "{\"type\":\"msg\",\"from\":\"%s\",\"text\":\"%.*s\"}",
-                     pkt->src_uid, (int)pkt->payload_len, pkt->payload);
-            esp_err_t err = ws_send_json(dst->ws_fd, buf);
+            /* Deliver to phone via WebSocket. Use cJSON to avoid JSON injection if payload has quotes. */
+            cJSON *root = cJSON_CreateObject();
+            cJSON_AddStringToObject(root, "type", "msg");
+            cJSON_AddStringToObject(root, "from", pkt->src_uid);
+            
+            char *tmp = malloc(pkt->payload_len + 1);
+            if (tmp) {
+                memcpy(tmp, pkt->payload, pkt->payload_len);
+                tmp[pkt->payload_len] = '\0';
+                cJSON_AddStringToObject(root, "text", tmp);
+            }
+            
+            char *json_str = cJSON_PrintUnformatted(root);
+            esp_err_t err = ESP_FAIL;
+            if (json_str) {
+                err = ws_send_json(dst->ws_fd, json_str);
+                free(json_str);
+            }
+            if (tmp) free(tmp);
+            cJSON_Delete(root);
+
             if (err != ESP_OK) {
                 ESP_LOGW(TAG, "ws_send failed fd=%d err=%d (phone likely disconnected)",
                          dst->ws_fd, err);
@@ -310,7 +361,11 @@ void router_task(void *arg) {
     radio_pkt_t  lora_pkt;
     ws_event_t   ws_evt;
 
+    esp_task_wdt_add(NULL);
+
     for (;;) {
+        esp_task_wdt_reset();
+        
         /*
          * Process LoRa RX first (higher priority — delivery to phone).
          * Then handle WiFi events.
